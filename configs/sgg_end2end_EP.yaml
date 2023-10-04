@@ -1,0 +1,75 @@
+_BASE_: "Base-RCNN-FPN.yaml"
+MODEL:
+  META_ARCHITECTURE: 'SceneGraphRCNNEnd2End'
+  MASK_ON: False #set true for end2end mask learning/prediction
+  USE_MASK_ON_NODE: False
+  WEIGHTS: './data/pretrained/detectron2/new_baselines/mask_rcnn_R_50_FPN_400ep_LSJ/42019571/model_final_14d201.pkl'
+  RESNETS:
+    DEPTH: 50
+    #DEPTH: 101
+  ROI_HEADS:
+    NAME: 'StandardSGROIHeadsEnd2End'
+    NUM_CLASSES: 23
+    MASK_NUM_CLASSES: 23
+    EMBEDDINGS_PATH: "./data/embeddings/glove_mean_vg"
+    EMBEDDINGS_PATH_COCO: "./data/embeddings/glove_mean_coco"
+    SCORE_THRESH_TEST: 0.1
+    #NMS_THRESH_TEST:  0.3
+    PROPOSAL_APPEND_GT: True
+  ROI_SCENEGRAPH_HEAD:
+    NAME: 'SceneGraphHead' # [End2End]
+    PREDICTOR: 'MotifPredictor' # [End2End]
+    MASK_REFINEMENT: True #Only relevant if we use End2End scenegraphhead  and motifpredictor with segmentation
+    DISABLE_MASKS_IN_SCENEGRAPH_HEAD: False # only true for ablation-test for no masks in SG-Head
+    NUM_CLASSES: 2
+    USE_GT_BOX: False
+    USE_GT_OBJECT_LABEL: False
+    ADD_GT_INSTANCES_TO_DETECTOR_TRAIN_PREDICTIONS: True
+    NUM_SAMPLE_PER_GT_REL:  1  # when sample fg relationship from gt, the max number of corresponding proposal pairs
+    BATCH_SIZE_PER_IMAGE: 128 # try to feature more (negative) relation samples
+    REQUIRE_BOX_OVERLAP: False
+    APPLY_ARGMAX_OVER_ALL_LOGITS_AND_FILTER_FG: True #a more precision-centric version of running inference. important for getting rid of low confidence predictions
+    PREDICT_USE_VISION: False #don't use union-features to allow for more individual entities
+  FREEZE_LAYERS:
+    META_ARCH: []
+    ROI_HEADS: []
+  ROI_MASK_HEAD:
+    NAME: 'SceneGraphMaskHeadEnd2End'
+    CLS_AGNOSTIC_MASK: False
+  ROI_BOX_FEATURE_EXTRACTORS:
+    NAME: 'BoxFeatureExtractor'
+  ROI_RELATION_FEATURE_EXTRACTORS:
+    USE_MASK_COMBINER: True # needed for relation extraction using masks
+DATASETS:
+  TYPE: "EP3"
+  TRAIN: ('EP3_train',)
+  TEST: ('EP3_val',)
+DATALOADER:
+  NUM_WORKERS: 2
+SOLVER:
+  IMS_PER_BATCH: 4
+  BIAS_LR_FACTOR: 1.0
+  BASE_LR: 0.001
+  WARMUP_FACTOR: 0.1
+  WEIGHT_DECAY: 0.0001
+  MOMENTUM: 0.9
+  STEPS: (210000, 250000)
+  MAX_ITER: 200000
+  CLIP_GRADIENTS:
+    CLIP_VALUE: 5.0
+  CHECKPOINT_PERIOD: 10000
+#TEST: #remove test for end2end training and do separately, as we run into GPU memory issues
+#  EVAL_PERIOD: 10000
+TEST:
+  RELATION:
+   REQUIRE_OVERLAP: False
+  DETECTIONS_PER_IMAGE: 50 #reduce due to OOM issues on default cluster
+GLOVE_DIR: './glove/'
+INPUT:
+  RANDOM_FLIP: "none"
+  MIN_SIZE_TRAIN: (250, 300, 350, 400, 450, 500, 550)
+  MAX_SIZE_TRAIN: 600
+  MIN_SIZE_TEST: 400
+  MAX_SIZE_TEST: 600
+SEED: 123
+
