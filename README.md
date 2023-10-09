@@ -16,9 +16,9 @@ To setup the environment with all the required dependencies, we provide further 
 
 
 ## Datasets and model download
-Please use [following link](https://drive.google.com/drive/folders/1Dijhs-zj9KYyusy-e_DvoBDUNktsu78S?usp=share_link) to download model checkpoints and datasets.
+Please use [following link](https://drive.google.com/drive/folders/1ohRlFvzFvACUz4i1IhxHS-Ve3Wf1l9Uf?usp=sharing) to download model checkpoints and datasets.
 
-Unzip `checkpoints.zip` and `datasets.zip` at the root level of this repository.
+Unzip `checkpoints.zip` at the root level of this repository and download the images as described in `download_ep_images_helper`.
 
 
 ## File Naming in our Demo 
