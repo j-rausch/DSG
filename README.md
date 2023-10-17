@@ -1,7 +1,7 @@
 # DSG: Document Structure Generator
 
 ## Paper
-Further information and evaluations can be found in the [paper](paper.pdf)
+Further information and evaluations can be found in the [paper](https://arxiv.org/abs/2310.09118)
 
 
 ## Requirements
