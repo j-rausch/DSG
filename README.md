@@ -18,7 +18,7 @@ To setup the environment with all the required dependencies, we provide further 
 ## Datasets and model download
 Please use [following link](https://drive.google.com/drive/folders/1ohRlFvzFvACUz4i1IhxHS-Ve3Wf1l9Uf?usp=sharing) to download model checkpoints and datasets.
 
-Unzip `checkpoints.zip` at the root level of this repository and download the images as described in `download_ep_images_helper`. 
+Unzip `checkpoints.zip` and `datasets.zip` at the root level of this repository and download the images as described in `download_ep_images_helper`. Move the train/test/val image directories to datasets/eperiodica3/imgs. 
 
 At the moment, there are two images which are inaccessible to the public due to copyright restrictions. Until they are publicly available, we download similar images from these magazines for which the original bounding boxes roughly match. In 2024 "edm.001.2018.073.0201-0" in the training set will be publicly available, and "tbg.002.2020.158.0072-0" in the test set will be publicly available in 2026.
 
