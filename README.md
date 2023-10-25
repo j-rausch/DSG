@@ -46,3 +46,6 @@ python visualizations/demo.py --config-file ./configs/sgg_end2end_EP.yaml --inpu
 The hOCR creation demo uses the outputs created by the previous script.
 
 For convenience, we prepared outputs for one sample and a jupyter notebook to demonstrate our hOCR creation and querying [here](sysdemo/system_demonstration.ipynb)
+
+### Credits
+This repository builds on other open source implementations, including [detectron2](https://github.com/facebookresearch/detectron2/) and [segmentation-sg](https://github.com/facebookresearch/detectron2/)
