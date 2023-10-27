@@ -25,7 +25,7 @@ Our code is tested on
 - easydict
 - h5py
 - numpy < 1.24
-- network == 2.8
+- networkx == 2.8
 - shapely
 
 **Note**: Please make sure the detectron2 version correctly corresponds to the pytorch and cuda versions installed. Please check [this page](https://detectron2.readthedocs.io/en/latest/tutorials/install.html) for installation instructions and common issues.
