@@ -52,16 +52,19 @@ class VisualizationDemo(object):
         vis_output = None
         predictions = self.predictor(image)
 
-        #TODO: filter relations such that only foreground remains
-        if self.filter_background_relations is True:
-            pred_rel_labels = torch.argmax(predictions['pred_rel_scores'], dim=1)
-            num_rel_class_without_background = self.num_rel_categories_without_bg
-            background_removal_mask = (pred_rel_labels != num_rel_class_without_background)
-            filtered_rel_pair_idx = predictions['rel_pair_idxs'][background_removal_mask, :]
-            filtered_rel_class_prob = predictions['pred_rel_scores'][background_removal_mask, :]
-            filtered_rel_labels = pred_rel_labels[background_removal_mask]
-            predictions['rel_pair_idxs'] = filtered_rel_pair_idx
-            predictions['pred_rel_scores'] = filtered_rel_class_prob
+        # we currently need to create unfiltered tensors for postprocessing and hocr creation, we uncommented the previous version
+        # NOTE: if we dont filter here this may have an influence on evaluation this may be subject to change in the future
+
+        #self.filter_background_relations = False
+        #if self.filter_background_relations is True:
+        #    pred_rel_labels = torch.argmax(predictions['pred_rel_scores'], dim=1)
+        #    num_rel_class_without_background = self.num_rel_categories_without_bg
+        #    background_removal_mask = (pred_rel_labels != num_rel_class_without_background)
+        #    filtered_rel_pair_idx = predictions['rel_pair_idxs'][background_removal_mask, :]
+        #    filtered_rel_class_prob = predictions['pred_rel_scores'][background_removal_mask, :]
+        #    filtered_rel_labels = pred_rel_labels[background_removal_mask]
+        #    predictions['rel_pair_idxs'] = filtered_rel_pair_idx
+        #    predictions['pred_rel_scores'] = filtered_rel_class_prob
 
 
         # Convert image from OpenCV BGR format to Matplotlib RGB format.
