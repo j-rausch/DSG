@@ -37,35 +37,46 @@ from detectron2.config import get_cfg
 
 import xml.etree.ElementTree as ET
 from operator import itemgetter
+import shapely
 
-def followedby(dgg_class1_path, dgg_class2_path, root_hocr):
-    ret = []
-    for node in root_hocr.xpath(dgg_class1_path):
-        flwdby = node.attrib["dgg_followedby"]
-        for n in root_hocr.xpath(dgg_class2_path):
-            if flwdby == n.attrib['dgg_id']:
-                ret.append(n)
-    return ret
+dgg_hocr_mapping = {
+    "documentroot": "ocr_page",
+    "meta": "None",
+    "author": "ocr_author",
+    "backgroundfigure": "ocr_float",
+    "contentblock": "ocrx_block",
+    "figure": "ocr_float",
+    "figuregraphic": "ocr_photo",
+    "figurecaption": "ocr_caption",
+    "foot": "ocr_footer",
+    "footnote": "ocr_footer",
+    "head": "ocr_header",
+    "header": "ocr_header",
+    "item": "ocr_carea",
+    "itemize": "ocr_float",
+    "orderedgroup": "ocr_carea",
+    "pagenr": "ocr_pageno",
+    "tabular": "ocr_table",
+    "table": "ocr_table",
+    "unorderedgroup": "ocr_float",
+    "article": "None",
+    "tableofcontent": "ocr_table",
+    "col": "ocr_carea",
+    "row": "ocr_carea"}
 
-def create_graphs(postprocessed_tensor, class_mapping_list):
-    #graph with only parentof edges
-    graph_parentof = nx.DiGraph()
-    #graph with all edges after postprocessing
-    graph_after = nx.DiGraph()
-    for i in range(0, len(postprocessed_tensor['instances'].pred_boxes)):
-        graph_parentof.add_node(i, label = class_mapping_list[postprocessed_tensor['instances'].pred_classes[i]])
-        graph_after.add_node(i, label = class_mapping_list[postprocessed_tensor['instances'].pred_classes[i]])
-    
-    for i, pair in enumerate(postprocessed_tensor["rel_pair_idxs"]):
-        rel = torch.argmax(postprocessed_tensor["pred_rel_scores"][i])
-        if rel == 0: #followedby
-            graph_after.add_edge(int(pair[0]), int(pair[1]), label="followedby")
-            
-        elif rel == 1: #parentof
-            graph_after.add_edge(int(pair[0]), int(pair[1]), label="parentof")
-            graph_parentof.add_edge(int(pair[0]), int(pair[1]), label="parentof")
-            
-    return graph_parentof, graph_after
+span_div_mapping = {
+    "ocr_page":"div",
+    "ocr_author":"div",  
+    "ocr_float":"span",    
+    "ocrx_block":"span",
+    "ocr_photo":"span",
+    "ocr_caption":"span",
+    "ocr_footer":"span",
+    "ocr_header":"span",
+    "ocr_carea":"div",
+    "ocr_pageno":"span",
+    "ocr_table":"span",
+    "None":"div"}
 
 def scale_ocr_x(x, dimensions_scenegraph, dimensions_ocr):
     return x * dimensions_scenegraph[0] / dimensions_ocr[0]
@@ -96,6 +107,199 @@ def iou_x1y1x2y2(bbox1, bbox2):
     iou = poly_1.intersection(poly_2).area / poly_1.union(poly_2).area
     return iou
 
+def create_graphs(postprocessed_tensor, class_mapping_list):
+    #graph with only parentof edges
+    graph_parentof = nx.DiGraph()
+    #graph with all edges after postprocessing
+    graph_after = nx.DiGraph()
+    for i in range(0, len(postprocessed_tensor['instances'].pred_boxes)):
+        graph_parentof.add_node(i, label = class_mapping_list[postprocessed_tensor['instances'].pred_classes[i]])
+        graph_after.add_node(i, label = class_mapping_list[postprocessed_tensor['instances'].pred_classes[i]])
+    
+    for i, pair in enumerate(postprocessed_tensor["rel_pair_idxs"]):
+        rel = torch.argmax(postprocessed_tensor["pred_rel_scores"][i])
+        if rel == 0: #followedby
+            graph_after.add_edge(int(pair[0]), int(pair[1]), label="followedby")
+            
+        elif rel == 1: #parentof
+            graph_after.add_edge(int(pair[0]), int(pair[1]), label="parentof")
+            graph_parentof.add_edge(int(pair[0]), int(pair[1]), label="parentof")
+            
+    return graph_parentof, graph_after
+
+def find_root_node(graph):
+    root_node = 0
+    for node in graph.nodes:
+        if graph.nodes[node]['label'] == "documentroot":    
+            root_node = node
+    return root_node
+
+import xml.dom.minidom
+
+def create_xml_skeleton(graph_parentof, graph_full):
+    def get_ordered_children(node, graph_full, graph_parentof):
+        dgg_children = list(graph_parentof.neighbors(node))
+
+        #set order of children
+        dgg_children_sorted = []
+        #subgraph induced on children of node
+        subgraph = graph_full.subgraph(dgg_children).copy()
+        #if a node is an isolate in the subgraph it means that it isn't part of any followedby relations. These nodes are added last
+        subgraph_isolates = list(nx.isolates(subgraph))
+
+        subgraph.remove_nodes_from(subgraph_isolates)
+        #nodes with followedby relations left, sort them inside of connected components
+        subgraph_connected_component_list = []
+        
+        #for each component run a dfs and add nodes in the order of dfs
+        for component in nx.connected_components(subgraph.to_undirected(as_view=True)):
+            #find root of each connected component 
+            local_source = -1
+            for node1 in component:
+                if list(subgraph.predecessors(node1)) == []:
+                    local_source = node1
+            # add the order of the connected component to the connected component list      
+            subgraph_connected_component_list.append(list(nx.dfs_preorder_nodes(subgraph.subgraph(component).copy(), source=local_source)))
+        
+        #correct order children
+        connected_components_flattened = [item for sublist in subgraph_connected_component_list for item in sublist]
+        dgg_children_sorted = connected_components_flattened + subgraph_isolates
+            
+
+        return dgg_children_sorted
+    
+    def add_children_to_xml(parent_xml_node, parent_graph_node):
+        # Iterate over all children of the current node in the graph
+        for child in get_ordered_children(parent_graph_node, graph_full, graph_parentof):
+            child_label = graph_parentof.nodes[child]['label']
+            # Create an XML element for the child node
+            child_xml_node = ET.SubElement(parent_xml_node, child_label, id=str(child))
+            # Recursively add children of this child node to the XML
+            add_children_to_xml(child_xml_node, child)
+    
+    root_node = find_root_node(graph_parentof)
+
+    # Create the root element of the XML document
+    root_label = graph_parentof.nodes[root_node]['label']
+    root_xml_node = ET.Element(root_label)
+
+    # Start the recursive process to add all children to the XML root
+    add_children_to_xml(root_xml_node, root_node)
+
+    # Convert the XML structure to a string representation
+    xml_str = ET.tostring(root_xml_node, encoding='utf8', method='xml').decode()
+
+    # Pretty print the XML string
+    dom = xml.dom.minidom.parseString(xml_str)  # Parse the string
+    pretty_xml_str = dom.toprettyxml(indent="  ")  # Pretty print with indentation
+
+    # Optionally, you can write the XML string to a file
+    with open('graph.xml', 'w') as file:
+        file.write(pretty_xml_str)
+
+    return root_xml_node
+
+def adjust_xml_skeleton(root_xml_node, postprocessed_tensor, graph_full, graph_parentof):
+    def get_followedby_id(node_id):
+        for source, target, data in graph_full.edges(data=True):
+            if source == node_id and data['label'] == 'followedby':
+                return target
+        return None
+
+    def adjust_node(node, node_id):
+        node.set('dgg_class', node.tag)
+        node.set('dgg_id', str(node_id))
+        node.set('dgg_score', str(postprocessed_tensor['instances'].scores[node_id].item()))
+        
+        children_ids = [child for child in graph_parentof.successors(node_id)]
+        node.set('dgg_children', str(children_ids))
+        
+        followedby_id = get_followedby_id(node_id)
+        node.set('dgg_followedby', str(followedby_id) if followedby_id is not None else 'None')
+
+        # Remove the original 'id' attribute
+        if 'id' in node.attrib:
+            del node.attrib['id']
+
+        node.tag = 'div'
+
+        for child in node:
+            child_id = int(child.get('id'))
+            adjust_node(child, child_id)
+
+    root_node = find_root_node(graph_parentof)
+
+    adjust_node(root_xml_node, root_node)
+
+    # Convert the XML structure to a string representation
+    xml_str = ET.tostring(root_xml_node, encoding='utf8', method='xml').decode()
+
+    # Pretty print the XML string
+    dom = xml.dom.minidom.parseString(xml_str)  # Parse the string
+    pretty_xml_str = dom.toprettyxml(indent="  ")  # Pretty print with indentation
+
+    # Optionally, you can write the XML string to a file
+    with open('graph.xml', 'w') as file:
+        file.write(pretty_xml_str)
+    return root_xml_node
+
+
+def transform_to_hocr(root_xml_node, postprocessed_tensor):
+
+    def create_hocr_node(dgg_node):
+        #dgg node
+        dgg_node_copy = ET.Element(dgg_node.tag)
+        dgg_node_copy.attrib = dgg_node.attrib.copy()
+
+        #hocr node
+        dgg_class = dgg_node_copy.get('dgg_class')
+        hocr_class = dgg_hocr_mapping.get(dgg_class, 'None')
+        hocr_node = ET.Element('div')
+        hocr_node.set('class', hocr_class)
+
+        dgg_id = int(dgg_node.get('dgg_id'))
+        #create list of boundingboxes of postprocessed_tensor
+        bbox_list = []
+        for bbox in postprocessed_tensor['instances'].pred_boxes:
+            bbox_list.append([bbox[0].item(), bbox[1].item(), bbox[2].item(), bbox[3].item()])
+        bbox = bbox_list[dgg_id]
+        
+        hocr_node.set('title', f"bbox {bbox[0]} {bbox[1]} {bbox[2]} {bbox[3]}")
+
+        if hocr_class == 'None':
+            return dgg_node_copy
+        
+        hocr_node.append(dgg_node_copy)
+
+        return hocr_node
+    
+    def append_to_children(dgg_node):
+        hocr_node = create_hocr_node(dgg_node)
+        for child in dgg_node:
+            if dgg_node.get('dgg_class') == "meta" or dgg_node.get('dgg_class') == "article":
+                hocr_node.append(append_to_children(child))
+            else:
+                hocr_node[0].append(append_to_children(child))
+        return hocr_node
+    
+    def adjust_tags(node):
+        for child in node:
+            hocr_class = child.get('class', 'None')
+            new_tag = span_div_mapping.get(hocr_class, 'div')
+            if child.tag != new_tag:
+                child.tag = new_tag
+            adjust_tags(child)
+
+
+    
+    root_hocr_node = append_to_children(root_xml_node)
+    
+    # Adjust tags according to span_div_mapping
+    adjust_tags(root_hocr_node)
+    
+    
+
+    return root_hocr_node
 
 def attach_head_and_body(root):
     head = ET.Element("head")
@@ -114,214 +318,48 @@ def attach_head_and_body(root):
     head.append(meta2)
     return head, body
 
-#returns the node index that i is followedby if it exists, otherwise "None"
-def get_followedby(postprocessed_tensor, i):
-    followedby = "None"
-    followedby_score = -1.0
-    for index, rel in enumerate(postprocessed_tensor['rel_pair_idxs']):
-        if int(rel[0]) == i:
-            if torch.argmax(postprocessed_tensor['pred_rel_scores'][index]) == 0:
-                followedby=str(int(rel[1]))
-
-    return followedby
-
-#def create_dgg_node():
-#
-#def create_hocr_node():
-    
-def create_xml_node(ids, dgg_id, bbox, dgg_class, dgg_score, dgg_children, dgg_followedby):
-    bbox[0], bbox[1], bbox[2], bbox[3], ids, dgg_children, dgg_id = str(int(bbox[0])), str(int(bbox[1])), str(int(bbox[2])), str(int(bbox[3])), str(ids), str(dgg_children), str(dgg_id)
-    dgg_hocr_mapping = {
-    "documentroot": "ocr_page",
-    "meta": "None",
-    "author": "ocr_author",
-    "backgroundfigure": "ocr_float",
-    "contentblock": "ocrx_block",
-    "figure": "ocr_float",
-    "figuregraphic": "ocr_photo",
-    "figurecaption": "ocr_caption",
-    "foot": "ocr_footer",
-    "footnote": "ocr_footer",
-    "head": "ocr_header",
-    "header": "ocr_header",
-    "item": "ocr_carea",
-    "itemize": "ocr_float",
-    "orderedgroup": "ocr_carea",
-    "pagenr": "ocr_pageno",
-    "tabular": "ocr_table",
-    "table": "ocr_table",
-    "unorderedgroup": "ocr_float",
-    "article": "None",
-    "tableofcontent": "ocr_table",
-    "col": "ocr_carea",
-    "row": "ocr_carea"}
-    
-    span_div_mapping = {
-    "ocr_page":"div",
-    "ocr_author":"div",  
-    "ocr_float":"span",    
-    "ocrx_block":"span",
-    "ocr_photo":"span",
-    "ocr_caption":"span",
-    "ocr_footer":"span",
-    "ocr_header":"span",
-    "ocr_carea":"div",
-    "ocr_pageno":"span",
-    "ocr_table":"span",
-    "None":"div"}
-    
-    #since article and meta are supposed to not have an hocr node we create a special case for them
-    if dgg_class == "meta" or dgg_class == "article":
-        dgg_node = ET.Element("div")
-        dgg_node.set("dgg_class", dgg_class)
-        dgg_node.set("id", ids)
-        ids = str(int(ids) + 1)
-        dgg_node.set("dgg_id", dgg_id)
-        dgg_node.set("dgg_score", dgg_score)
-        dgg_node.set("dgg_children", dgg_children)
-        dgg_node.set("dgg_followedby", dgg_followedby)
-        
-        #parse bbox from string to int again for later applications
-        bbox[0], bbox[1], bbox[2], bbox[3] = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-        
-        return dgg_node, int(ids)
-    
-    else:
-        hocr_class = dgg_hocr_mapping[dgg_class]
-    
-        hocr_node = ET.Element(span_div_mapping[hocr_class])
-        hocr_node.set("class", hocr_class)
-        hocr_node.set("id", ids)
-        ids = str(int(ids) + 1)
-        hocr_node.set('title', 'bbox '+bbox[0]+" "+bbox[1]+" "+bbox[2]+" "+bbox[3])
-        
-        dgg_node = ET.Element("div")
-        dgg_node.set("dgg_class", dgg_class)
-        dgg_node.set("id", ids)
-        ids = str(int(ids) + 1)
-        dgg_node.set("dgg_id", dgg_id)
-        dgg_node.set("dgg_score", dgg_score)
-        dgg_node.set("dgg_children", dgg_children)
-        dgg_node.set("dgg_followedby", dgg_followedby)
-        
-        hocr_node.append(dgg_node)
-        
-        #parse bbox from string to int again for later applications
-        bbox[0], bbox[1], bbox[2], bbox[3] = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-        
-        return hocr_node, int(ids)
-    
-
-def create_hocr_skeleton(bbox_list, graph_parentof, graph_after, postprocessed_tensor, class_mapping_list, ids):
-    #create root node and attach head and body
-    root = ET.Element("html")
-    head, body = attach_head_and_body(root) 
-    
-    #create list of xml nodes, each representing a detected bounding box
-    amount_of_bboxes = len(postprocessed_tensor['instances'].pred_boxes)
-    xml_node_list = []
-    
-    
-    #create xml node list
-    for i in range(0, amount_of_bboxes):
-        xml_node_list.append([])
-        
-    #create each xml node 
-    for i in range(0, amount_of_bboxes):
-        #bbox
-        bbox = bbox_list[i]
-        #class
-        dgg_class = graph_parentof.nodes[i]['label']
-        dgg_score = str(float(postprocessed_tensor['instances'].scores[i]))
-        
-        #parentof
-        dgg_children = list(graph_parentof.neighbors(i))
-        if dgg_children == []:
-            dgg_children = "None"
-        
-        #followedby
-        dgg_followedby = get_followedby(postprocessed_tensor, i)
-        
-        xml_node_list[i], ids = create_xml_node(ids, i, bbox, dgg_class, dgg_score, dgg_children, dgg_followedby)
-    
-    #append xml_nodes in correct order to each other
-    for i in range(0, amount_of_bboxes):
-        #class of i-th node
-        classx = class_mapping_list[postprocessed_tensor['instances'].pred_classes[i]]
-        
-        dgg_children = list(graph_parentof.neighbors(i))
-        
-        #set order of children
-        dgg_children_sorted = []
-        
-        #subgraph induced on children of i-th node
-        subgraph = graph_after.subgraph(dgg_children).copy()
-        
-        #if a node is an isolate in the subgraph it means that it isn't part of any followedby relations. These nodes are added last
-        subgraph_isolates = list(nx.isolates(subgraph))
-        subgraph.remove_nodes_from(subgraph_isolates)
-        
-        #nodes with followedby relations left, sort them inside of connected components
-        subgraph_connected_component_list = []
-        
-        #for each component run a dfs and add nodes in the order of dfs
-        for component in nx.connected_components(subgraph.to_undirected(as_view=True)):
-            #find root of each connected component 
-            local_source = -1
-            for node in component:
-                if list(subgraph.predecessors(node)) == []:
-                    local_source = node
-                    
-            # add the order of the connected component to the connected component list      
-            subgraph_connected_component_list.append(list(nx.dfs_preorder_nodes(subgraph.subgraph(component).copy(), source=local_source)))
-        
-        #correct order children
-        connected_components_flattened = [item for sublist in subgraph_connected_component_list for item in sublist]
-        dgg_children_sorted = connected_components_flattened + subgraph_isolates
-        
-        
-        
-        for child in dgg_children_sorted:
-            if classx == "article" or classx == "meta":
-                xml_node_list[i].append(xml_node_list[child])
-            else:
-                xml_node_list[i][0].append(xml_node_list[child])
-    
-    dgg_documentroot_index = class_mapping_list.index("documentroot")
-    tensor_documentroot_index = ((postprocessed_tensor["instances"].pred_classes).tolist()).index(dgg_documentroot_index)
-    
-    body.append(xml_node_list[tensor_documentroot_index])
-    
-    
-    return root, xml_node_list, ids
-
-def create_hocr_word(ids, word, bbox):
+def create_hocr_word(word, bbox):
     bbox[0], bbox[1], bbox[2], bbox[3] = str(int(bbox[0])), str(int(bbox[1])), str(int(bbox[2])), str(int(bbox[3]))
     
     hocr_word = ET.Element("span")
     hocr_word.set('class', 'ocrx_word')
-    hocr_word.set('id', str(ids))
-    ids = str(int(ids) + 1)
     hocr_word.set('title', 'bbox'+bbox[0]+" "+bbox[1]+" "+bbox[2]+" "+bbox[3])
     hocr_word.text=word
     
-    return hocr_word, int(ids)
-    
-    
-    
-    
+    return hocr_word
+
+           
+def find_maxiou_node(maxiou_index, root_hocr):
+    for child in root_hocr.iter():
+        dgg_id = child.get('dgg_id', 'None')
+        if dgg_id != 'None':
+            dgg_id = int(dgg_id)
+        
+        if dgg_id == maxiou_index:
+            return child
+        else:
+             return None
+
+def find_closest_leaf_node(word_bbox, root_hocr, leaf_nodes):
+    pass
+                
+
 def create_hocr(postprocessed_tensor, ocr_fulltext_path, class_mapping_list, output_folder=None, filename=None):
-    #create graphs
-    graph_parentof, graph_after = create_graphs(postprocessed_tensor, class_mapping_list)
+    graph_parentof, graph_full = create_graphs(postprocessed_tensor, class_mapping_list)
+    root_xml_node = create_xml_skeleton(graph_parentof, graph_full)
+    root_xml_node = adjust_xml_skeleton(root_xml_node, postprocessed_tensor, graph_full, graph_parentof)
+    root_hocr_node = transform_to_hocr(root_xml_node, postprocessed_tensor)
     
-    #create list of boundingboxes of postprocessed_tensor
+
+     #create list of boundingboxes of postprocessed_tensor
     bbox_list = []
     for bbox in postprocessed_tensor['instances'].pred_boxes:
         bbox_list.append([bbox[0].item(), bbox[1].item(), bbox[2].item(), bbox[3].item()])
     
+
     # load ocr fulltext
     f = open(ocr_fulltext_path)
-    
+
     #dimensions of ocr text
     dimensions_ocr = f.readline()
     dimensions_ocr = dimensions_ocr.split(",", 2)
@@ -330,19 +368,13 @@ def create_hocr(postprocessed_tensor, ocr_fulltext_path, class_mapping_list, out
     #dimensions of scenegraph
     height, width = postprocessed_tensor['instances'].image_size
     dimensions_scenegraph = [width, height]
-    
-    #we want an id for each xml node created
-    ids = 0
-    
-    #create hocr skeleton
-    root_hocr, xml_node_list, ids = create_hocr_skeleton(bbox_list, graph_parentof, graph_after, postprocessed_tensor, class_mapping_list, ids)
-    
+
     #ocr text
     lines = f.readlines()
-    
+
     #leaf nodes of parentof graph
     leaf_nodes = [node for node in graph_parentof.nodes() if graph_parentof.in_degree(node)!=0 and graph_parentof.out_degree(node)==0]
-    
+
     #append each word in the ocr text to correct xml node in hocr skeleton
     for l in lines:
         #line format is: Word x, y, w, h or <EOP>/<EOS> (end of paragraph, end of sentence)
@@ -356,11 +388,12 @@ def create_hocr(postprocessed_tensor, ocr_fulltext_path, class_mapping_list, out
             word_bbox = [x, y, w, h]
             
             word_bbox = convert_to_2_cornerpoints(word_bbox)
+
             #intersection over union list with all leaf nodes
             iou_list = []
             for bbox in postprocessed_tensor['instances'].pred_boxes:
                 iou_list.append(0.0)
-                
+            
             for leaf_node in leaf_nodes:
                 bbox = bbox_list[leaf_node]
                 #these conversions are needed since the dgg bbox coordinates are in x1y1x2y2 format and the eperiodica ocr is in xywh
@@ -368,25 +401,57 @@ def create_hocr(postprocessed_tensor, ocr_fulltext_path, class_mapping_list, out
             
             #best fitting xml node for word, !TODO: heuristic for word that isn't in any bounding box (attach to same as last node)
             maxiou_index = np.argmax(iou_list)
-            
             word = l[0]
             
             #create hocr word xml node
-            hocr_word, ids = create_hocr_word(ids, word, word_bbox)
-            
-            #append to correct entity, in very rare cases we might create a meta or article that is a leaf node therefore except
-            #is there, could add a heuristic here potentially
-            try:
-                xml_node_list[maxiou_index][0].append(hocr_word)
-            except IndexError:
-                xml_node_list[maxiou_index].append(hocr_word)
-            
+            hocr_word = create_hocr_word(word, word_bbox)
+            #find correspond hocr node for maxiou
+            maxiou_index = str(maxiou_index)
+            maxiou_node = None
+            for child in root_hocr_node.iter():
+                dgg_id = child.get('dgg_id', 'None')
+                if dgg_id == maxiou_index:
+                    maxiou_node = child
+            #maxiou_node = find_maxiou_node(maxiou_index, root_hocr_node)
+            if maxiou_node != None:
+                maxiou_node.append(hocr_word)
+            else:
+                pass
+                print(f"didnt find maxiou for word: {word}")
+
+
+
+
+      
+    idx = 0
+    for child in root_hocr_node.iter():
+        child.set('id', str(idx))
+        idx += 1        
+    
+    root = ET.Element("html")
+    _, body = attach_head_and_body(root)
+
+    body.append(root_hocr_node)        
+
+    xml_str = ET.tostring(root, encoding='utf8', method='xml').decode()
+    # Pretty print the XML string
+    dom = xml.dom.minidom.parseString(xml_str)  # Parse the string
+    pretty_xml_str = dom.toprettyxml(indent="  ")  # Pretty print with indentation
+
+    # Optionally, you can write the XML string to a file
+    with open('graph.xml', 'w') as file:
+        file.write(pretty_xml_str)
     
     if output_folder:
-        tree = ET.ElementTree(root_hocr)
+        tree = ET.ElementTree(root)
         ET.indent(tree, space=" ", level=0)
         tree.write(output_folder+filename, encoding='utf-8')
         
         print(filename+" saved at "+output_folder+filename)
-    
-    return root_hocr
+
+    return root
+
+
+
+
+
