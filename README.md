@@ -39,7 +39,7 @@ First, create an output directory, e.g. at `./demo/EP_outputs`.
 
 To run DSG for prediction and use grammar-based postprocessing, run:
 ```
-python visualizations/demo.py --config-file ./configs/sgg_end2end_EP.yaml --input ./datasets/eperiodica3/imgs/val/* --output ./demo/EP_outputs --raw_output ./demo/EP_outputs --opts MODEL.ROI_SCENEGRAPH_HEAD.PREDICT_USE_VISION True MODEL.WEIGHTS ./checkpoints/DSG_E2E_eperiodica/dsg_e2e_eperiodica_checkpoint.pth TEST.USE_GRAMMAR_POSTPROCESSING True
+python visualizations/demo.py --config-file ./configs/sgg_end2end_EP.yaml --input ./datasets/eperiodica3/imgs/val/* --output ./demo/EP_outputs --raw_output ./demo/EP_outputs --opts MODEL.ROI_SCENEGRAPH_HEAD.PREDICT_USE_VISION True MODEL.WEIGHTS ./checkpoints/DSG_E2E_eperiodica/dsg_e2e_eperiodica_checkpoint.pth TEST.USE_GRAMMAR_POSTPROCESSING False
 ```
 
 ### Demo of hOCR creation
