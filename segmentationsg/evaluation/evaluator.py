@@ -51,10 +51,6 @@ def scenegraph_inference_on_dataset(cfg, model, data_loader, evaluator):
                 start_time = time.perf_counter()
                 total_compute_time = 0
 
-            #TODO: why is this skipping done?
-            if len(inputs[0]['instances']) > 40:
-                logger.warning("Sample for img {} would have been previously skipped, because it had over 40 instance predictions. Why?".format(inputs[0]['file_name']))
-                #continue
             start_compute_time = time.perf_counter()
             
             outputs = model(inputs)

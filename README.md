@@ -16,7 +16,7 @@ To setup the environment with all the required dependencies, we provide further 
 
 
 ## Datasets and model download
-Please use [following link](https://drive.google.com/drive/folders/1ohRlFvzFvACUz4i1IhxHS-Ve3Wf1l9Uf?usp=sharing) to download model checkpoints and datasets.
+Please use [following link](https://drive.google.com/drive/folders/1Dijhs-zj9KYyusy-e_DvoBDUNktsu78S) to download model checkpoints and datasets.
 
 Unzip `checkpoints.zip` and `datasets.zip` at the root level of this repository and download the images as described in `download_ep_images_helper`. Move the train/test/val image directories to datasets/eperiodica3/imgs. 
 

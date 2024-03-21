@@ -8,14 +8,15 @@ Our code is tested on
 ### Installation guide:
 
 1. Install PyTorch 1.11
-
 2. install the cython package (e.g. `pip install cython`)
-3. install modified pycocotools:
+3. Clone the official detectron2 repository, e.g. at commit `45b3fce`: 
+    - `git clone detectron2`
+    - `git checkout 45b3fce`
+4. Install detectron2, e.g. via `python setup.py develop` while inside detectron2 repository
+4. Inside DSG directory, run `python setup.py develop`
+3. Install modified pycocotools:
     - go to subdirectory cocoapi/PythonAPI
     - `python setup.py build_ext install`
-2. Copy the official detectron2 repository
-3. Install detectron2, e.g. via `python setup.py develop` while inside detectron2 repository
-4. Inside DSG directory, run `python setup.py develop`
 5. Install additional required packages:
 
 - opencv-python
