@@ -54,6 +54,7 @@ class VisualizationDemo(object):
 
         # we currently need to create unfiltered tensors for postprocessing and hocr creation, we uncommented the previous version
         # NOTE: if we dont filter here this may have an influence on evaluation this may be subject to change in the future
+        # for now we keep this filtered part commented out
 
         #self.filter_background_relations = False
         #if self.filter_background_relations is True:
