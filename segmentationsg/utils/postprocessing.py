@@ -108,16 +108,20 @@ def has_root_article_meta_toc(raw_tensor, class_mapping_list):
     meta_index = class_mapping_list.index("meta")
     toc_index = class_mapping_list.index("tableofcontent")
     
+    count_root = 0
     for class_index in (raw_tensor["instances"].pred_classes).tolist():
         if class_index == root_index:
             has_root = True
+            count_root += 1
         if class_index == article_index:
             has_article = True
         if class_index == meta_index:
             has_meta = True
         if class_index == toc_index:
             has_toc = True
-            
+    
+    if count_root > 1:
+        warnings.warn("More than 1 root was detected, this may lead to undefined behavior", category=UserWarning)
     return has_root, has_article, has_meta, has_toc
 
 def create_root(raw_tensor, class_mapping_list):
@@ -233,6 +237,7 @@ def create_parentof_and_followedby_matrices(raw_tensor):
             parentof_matrix[pair[0]][pair[1]]= raw_tensor["pred_rel_scores"][i][rel]
     return parentof_matrix, followedby_matrix, parentof_matrix_full, followedby_matrix_full 
 
+# fix article, meta, tableofcontent
 def fix_amt(parentof_matrix, followedby_matrix, parentof_matrix_full, followedby_matrix_full, class_mapping_list, raw_tensor):
     root_index, article_index, meta_index, toc_index = class_mapping_list.index("documentroot"), class_mapping_list.index("article"), class_mapping_list.index("meta"), class_mapping_list.index("tableofcontent")
     tensor_root_index = ((raw_tensor["instances"].pred_classes).tolist()).index(root_index)
@@ -418,11 +423,39 @@ def force_unorderedgroup(followedby_matrix, followedby_matrix_full, class_mappin
     return followedby_matrix, followedby_matrix_full
 
 
+
+
+
 def force_parentof(parentof_matrix, parentof_matrix_full, followedby_matrix, followedby_matrix_full, class_mapping_list, raw_tensor, has_toc):
-    num_instances = parentof_matrix[0].size
-    # only leave most likely parent
+    num_instances = parentof_matrix.shape[0]  # Adjusted to use shape for consistency
+    no_parent_nodes = []  # List to keep track of nodes without manageable parents
+
+    # Create combined adjacency matrix
+    sg_combined = np.zeros([num_instances, num_instances])
+    for i in range(num_instances):
+        for j in range(num_instances):
+            if parentof_matrix[i][j] != 0.0 or followedby_matrix[i][j] != 0.0:
+                sg_combined[i][j] = 1
+
+    # Function to check if adding an edge creates a cycle in the combined graph
+    def creates_cycle(combined_matrix, child, parent):
+        if child == parent:
+            return True
+        visited = set()
+        def dfs(v):
+            if v == parent:
+                return True
+            visited.add(v)
+            for w in range(num_instances):
+                if combined_matrix[v, w] == 1 and w not in visited and dfs(w):
+                    return True
+            return False
+        return dfs(child)
+    
+    
+
+    
     for j in range(num_instances):
-        
         if (any(parentof_matrix[:,j])):
             maxidx = np.argmax(parentof_matrix[:,j]) #index of max value
             maxvalue = parentof_matrix[maxidx,j]
@@ -444,13 +477,8 @@ def force_parentof(parentof_matrix, parentof_matrix_full, followedby_matrix, fol
 
             parentof_matrix[:,j] = np.zeros([num_instances])
             parentof_matrix[maxidx,j] = maxvalue
-
-
-        else: # j no parent
-            #class of the current column in question
+        else:
             classx = class_mapping_list[int(raw_tensor['instances'].pred_classes[j])]
-            
-            #documentroot always doesn't have a parent
             if classx == "documentroot":
                 continue
             if classx == "table" and has_toc:
@@ -458,81 +486,62 @@ def force_parentof(parentof_matrix, parentof_matrix_full, followedby_matrix, fol
                 parentof_matrix[tensor_toc_index, j] = 1.0
                 parentof_matrix_full[tensor_toc_index, j] = 1.0
                 continue
-                
 
-            found_good_parent = False
-            good_parent_id = None
-            good_parent_value = 0.0
+            potential_parents = np.copy(parentof_matrix_full[:, j])
+            tries = 0
+            failed = False
+            while np.any(potential_parents):
+                maxidx = np.argmax(potential_parents)
+                maxvalue = potential_parents[maxidx]
 
-            max_iterations = 1000
-            iterations = 1
-            while(not found_good_parent):
-                found_good_parent = True
-                maxidx = np.argmax(parentof_matrix_full[:,j]) #index of max value of all parents (even if background would be stronger)
-                maxvalue = parentof_matrix_full[maxidx,j]
-                # we already established that meta, toc, and article are kids of docroot so if another node has docroot as its parent we won't accept it
-                if class_mapping_list[int(raw_tensor['instances'].pred_classes[maxidx])] == "documentroot":
-                    parentof_matrix[maxidx, j] = 0.0
-                    parentof_matrix_full[maxidx, j] = 0.0
-                    found_good_parent = False
-                
-                # if the relation would build and antisymmetric we won't take it
-                if parentof_matrix[j, maxidx] != 0:
-                    parentof_matrix[maxidx, j] = 0.0
-                    parentof_matrix_full[maxidx, j] = 0.0
-                    found_good_parent = False
+                # Temporarily add edge to combined matrix to check for cycles
+                sg_combined_temp = np.copy(sg_combined)
+                sg_combined_temp[maxidx, j] = 1
 
-                if check_for_cycles(parentof_matrix, followedby_matrix, parentof_matrix_full, followedby_matrix_full):
-                    parentof_matrix[maxidx, j] = 0.0
-                    parentof_matrix_full[maxidx, j] = 0.0
-                    found_good_parent = False
-                
-                
-                good_parent_id = maxidx
-                good_parent_value = maxvalue
-
-                # if article doesn't have a child we set good parent_parent_value == 0.0 and we didnt find a good fit of the first iteration
-
-                try:
-                    tensor_article_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("article"))
-                except:
-                    tensor_article_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("tableofcontent"))
-                if not (any(parentof_matrix[tensor_article_index,:])) and iterations >= 2:
-                    good_parent_value = 0.0
-                iterations += 1
-                if iterations > max_iterations:
+                if not creates_cycle(sg_combined_temp, j, maxidx):
+                    parentof_matrix[:, j] = 0
+                    parentof_matrix[maxidx, j] = maxvalue
+                    sg_combined[maxidx, j] = 1  # Update combined matrix with valid parent
                     break
+                else:
+                    potential_parents[maxidx] = 0  # Invalidate this potential parent
+                    parentof_matrix_full[maxidx, j] = 0
+                tries += 1
+                if tries < 3:
+                    failed = True
+                    break
+            if failed:
+                no_parent_nodes.append(j)  # No valid parent found
+    
+    # Ensure a valid tree structure with fallback heuristics
+    article_kids_list, meta_kids_list = create_article_and_meta_kids_list(class_mapping_list)
+    has_toc_and_no_article = False
 
-            if good_parent_value == 0.0:
-                article_kids_list, meta_kids_list = create_article_and_meta_kids_list(class_mapping_list)
-                has_toc_and_no_article = False
+    # Fallback heuristic to ensure documentroot has the necessary children
+    for j in range(num_instances):
+        classx = class_mapping_list[int(raw_tensor['instances'].pred_classes[j])]
+        if not any(parentof_matrix[:, j]):
+            if classx in meta_kids_list:
+                try:
+                    tensor_meta_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("meta"))
+                except ValueError:
+                    continue  # Handle case where 'meta' does not exist
+                parentof_matrix[tensor_meta_index, j] = parentof_matrix_full[tensor_meta_index, j] = 1.0
+            elif classx in article_kids_list:
                 try:
                     tensor_article_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("article"))
-                except:
-                    tensor_article_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("tableofcontent"))
-                    has_toc_and_no_article = True
-                
-                if classx in meta_kids_list:
-                    tensor_meta_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("meta"))
-                    parentof_matrix[tensor_meta_index, j] = 1.0
-                    parentof_matrix_full[tensor_meta_index, j] = 1.0
-                    print(f"fallback heuristics used: instance {j} appended to meta")
-                elif classx in article_kids_list:
-                    if has_toc_and_no_article:
+                except ValueError:
+                    try:
                         tensor_article_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("tableofcontent"))
-                    else:
-                        tensor_article_index = ((raw_tensor["instances"].pred_classes).tolist()).index(class_mapping_list.index("article"))
-                    parentof_matrix[tensor_article_index, j] = 1.0
-                    parentof_matrix_full[tensor_article_index, j] = 1.0
-                    if has_toc_and_no_article:
-                        print(f"fallback heuristics used: instance {j} appended to tableofcontent")
-                    else:
-                        print(f"fallback heuristics used: instance {j} appended to article")
-
+                        has_toc_and_no_article = True
+                    except ValueError:
+                        continue  # Handle case where neither 'article' nor 'tableofcontent' exists
+                parentof_matrix[tensor_article_index, j] = parentof_matrix_full[tensor_article_index, j] = 1.0
                 
-            parentof_matrix[good_parent_id, j] = good_parent_value
-            parentof_matrix_full[good_parent_id, j] = good_parent_value
+    
+
     return parentof_matrix, parentof_matrix_full
+
 
 def create_postprocessed_tensor_from_matrices(parentof_matrix, followedby_matrix, raw_tensor):
     #### back to tensors ##########
@@ -559,22 +568,20 @@ def create_postprocessed_tensor_from_matrices(parentof_matrix, followedby_matrix
 def postprocess_raw_tensor(raw_tensor, class_mapping_list):
     # we first make sure that there is a documentroot, article and meta
     # no relations added this just adds the instance with scores to the raw_tensor
-    article_kids_list, meta_kids_list = create_article_and_meta_kids_list(class_mapping_list)
     
     has_root, has_article, has_meta, has_toc = has_root_article_meta_toc(raw_tensor, class_mapping_list)
     if not has_root:
         raw_tensor = create_root(raw_tensor, class_mapping_list)
-        warnings.warn("no root instance found, this may lead to undefined behavior in postprocessing and hocr file creation", category=UserWarning)
     # only create new article when there's no article or tableofcontent present
     if not has_article and not has_toc:
         raw_tensor = create_article(raw_tensor, class_mapping_list)
         warnings.warn("no article or tableofcontent instance found, this may lead to undefined behavior in postprocessing and hocr file creation", category=UserWarning)
     if not has_meta:
         raw_tensor = create_meta(raw_tensor, class_mapping_list)
-        warnings.warn("no meta instance found, this may lead to undefined behavior in postprocessing and hocr file creation", category=UserWarning)
     
     # create 4 matrices for parentof and followedby for easier checking and handling
     parentof_matrix, followedby_matrix, parentof_matrix_full, followedby_matrix_full= create_parentof_and_followedby_matrices(raw_tensor)
+    #print(f"parent of matrix: \n {parentof_matrix}\nfollowedby matrix: \n{followedby_matrix}\nparentof matrix full: \n{parentof_matrix_full}\nfollowedby matrix full:\n{followedby_matrix_full}")
 
     # we do not want documentroot to have a parent, nor a followedby relation:
     num_instances = len(raw_tensor["instances"])
@@ -605,7 +612,7 @@ def postprocess_raw_tensor(raw_tensor, class_mapping_list):
 
     # finally if a node has more than 1 parent only leave the most likely parent, and complete the graph so that each node has a parent and only one parent
     parentof_matrix, parentof_matrix_full = force_parentof(parentof_matrix, parentof_matrix_full, followedby_matrix, followedby_matrix_full, class_mapping_list, raw_tensor, has_toc)
-
+    
     # creates the new tensor from the two matrices
     postprocessed_tensor = create_postprocessed_tensor_from_matrices(parentof_matrix, followedby_matrix, raw_tensor)
 
