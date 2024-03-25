@@ -404,6 +404,26 @@ def force_no_cycles(parentof_matrix, followedby_matrix):
 
 def force_parentof(parentof_matrix, parentof_matrix_full, tensor_documentroot_index, class_mapping_list, raw_tensor, articlekids_list, metakids_list):
     num_instances = parentof_matrix[0].size
+    # parentof is antisymmetric
+    # if (a, parentof, b) and (b, parentof, a) we remove the relation with the lower score
+    for i in range(num_instances):
+        for j in range(num_instances):
+            if (parentof_matrix[i][j] != 0.0 and parentof_matrix[j][i] != 0.0):
+                if(parentof_matrix[i][j] > parentof_matrix[j][i]):
+                    parentof_matrix[j][i] = 0.0
+                    #this means that we have a new isolate find second best fit
+                    parentof_matrix_full[j][i] = 0.0
+                    new_parent_i = np.argmax(parentof_matrix_full[:, i])
+                    maxvalue = parentof_matrix_full[new_parent_i,j]
+                    parentof_matrix[new_parent_i, i] = maxvalue
+                else:
+                    parentof_matrix[i][j] = 0.0
+                    #this means that we have a new isolate find second best fit
+                    parentof_matrix_full[i][j] = 0.0
+                    new_parent_j = np.argmax(parentof_matrix_full[:, i])
+                    maxvalue = parentof_matrix_full[new_parent_j,j]
+                    parentof_matrix[new_parent_j, i] = maxvalue
+                    
     for j in range(num_instances):
         if (any(parentof_matrix[:,j])):
             maxidx = np.argmax(parentof_matrix[:,j]) #index of max value
@@ -411,7 +431,7 @@ def force_parentof(parentof_matrix, parentof_matrix_full, tensor_documentroot_in
             parentof_matrix[:,j] = np.zeros([num_instances])
             parentof_matrix[maxidx,j] = maxvalue  
         else: # no parent
-            
+            print(f"{j} has no parent")
             #class of the current column in question
             classx = class_mapping_list[int(raw_tensor['instances'].pred_classes[j])]
             
@@ -427,8 +447,9 @@ def force_parentof(parentof_matrix, parentof_matrix_full, tensor_documentroot_in
             parentof_matrix[maxidx,j] = maxvalue
             
             
-            if maxvalue == 0.0 and (classx == "meta" or classx == "article" or classx == "tableofcontent"):
+            if classx == "meta" or classx == "article" or classx == "tableofcontent":
                 parentof_matrix[tensor_documentroot_index, j] = 1.0
+        
             
             
             
@@ -463,25 +484,7 @@ def force_parentof(parentof_matrix, parentof_matrix_full, tensor_documentroot_in
             #        parentof_matrix[tensor_tableofcontent_index][j] = 1.0
             #    parentof_matrix[tensor_article_index][j] = 1.0
                 
-    # parentof is antisymmetric
-    # if (a, parentof, b) and (b, parentof, a) we remove the relation with the lower score
-    for i in range(num_instances):
-        for j in range(num_instances):
-            if (parentof_matrix[i][j] != 0.0 and parentof_matrix[j][i] != 0.0):
-                if(parentof_matrix[i][j] > parentof_matrix[j][i]):
-                    parentof_matrix[j][i] = 0.0
-                    #this means that we have a new isolate find second best fit
-                    parentof_matrix_full[j][i] = 0.0
-                    new_parent_i = np.argmax(parentof_matrix_full[:, i])
-                    maxvalue = parentof_matrix_full[new_parent_i,j]
-                    parentof_matrix[new_parent_i, i] = maxvalue
-                else:
-                    parentof_matrix[i][j] = 0.0
-                    #this means that we have a new isolate find second best fit
-                    parentof_matrix_full[i][j] = 0.0
-                    new_parent_j = np.argmax(parentof_matrix_full[:, i])
-                    maxvalue = parentof_matrix_full[new_parent_j,j]
-                    parentof_matrix[new_parent_j, i] = maxvalue
+    
     
     return parentof_matrix
 
@@ -569,14 +572,17 @@ def postprocess_raw_tensor(raw_tensor, class_mapping_list):
     
     #if article missing create instances
     if not has_article(raw_tensor, docparser_article_index) and not has_tableofcontent(raw_tensor, docparser_tableofcontent_index):
+        print("no article")
         raw_tensor, tensor_article_index = create_new_article(raw_tensor, docparser_article_index, class_mapping_list)
     
     #if meta missing create instance
     if not has_meta(raw_tensor, docparser_meta_index):
+        print("no meta")
         raw_tensor, tensor_meta_index = create_new_meta(raw_tensor, docparser_meta_index, class_mapping_list)
         
         
     if has_root(raw_tensor, docparser_documentroot_index):
+        print("no root")
         tensor_documentroot_index = ((raw_tensor["instances"].pred_classes).tolist()).index(docparser_documentroot_index)
     # documentroot has to be created
     else:
@@ -599,13 +605,17 @@ def postprocess_raw_tensor(raw_tensor, class_mapping_list):
     #removes cycles in combined graph
     parentof_matrix, followedby_matrix = force_no_cycles(parentof_matrix, followedby_matrix)
     
-    # every node has exactly one parent, except for documentroot which has no parent and parentof is antisymmetric
-    # adds isolates to either article or meta, if article or meta is an isolate they get added to documentroot
-    parentof_matrix = force_parentof(parentof_matrix, parentof_matrix_full, tensor_documentroot_index, class_mapping_list, raw_tensor, articlekids_list, metakids_list)
     
      # followedby is antisymmetric, no two followedby end in the same node, no two followedby start in the same node,
     # unorderedgroups aren't part of followedby relations, no followedby relations between children of different parents
     followedby_matrix = force_followedby(followedby_matrix, parentof_matrix, class_mapping_list, documentrootkids_mappings)
+    
+    # every node has exactly one parent, except for documentroot which has no parent and parentof is antisymmetric
+    # adds isolates to either article or meta, if article or meta is an isolate they get added to documentroot
+    parentof_matrix = force_parentof(parentof_matrix, parentof_matrix_full, tensor_documentroot_index, class_mapping_list, raw_tensor, articlekids_list, metakids_list)
+    
+
+
     
     #creates the new tensor from the two matrices
     postprocessed_tensor = create_postprocessed_tensor_from_matrices(parentof_matrix, followedby_matrix, raw_tensor)
