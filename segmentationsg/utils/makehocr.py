@@ -18,6 +18,7 @@ import sys
 import networkx as nx
 import matplotlib.pyplot as plt
 import copy
+import warnings
 
 import argparse
 import multiprocessing as mp
@@ -346,6 +347,8 @@ def find_closest_leaf_node(word_bbox, root_hocr, leaf_nodes):
 
 def create_hocr(postprocessed_tensor, ocr_fulltext_path, class_mapping_list, output_folder=None, filename=None):
     graph_parentof, graph_full = create_graphs(postprocessed_tensor, class_mapping_list)
+    if not nx.is_tree(graph_parentof):
+        warnings.warn("postprocessing failed to generate correct tree structure, hocr file may be incomplete", category=UserWarning)
     root_xml_node = create_xml_skeleton(graph_parentof, graph_full)
     root_xml_node = adjust_xml_skeleton(root_xml_node, postprocessed_tensor, graph_full, graph_parentof)
     root_hocr_node = transform_to_hocr(root_xml_node, postprocessed_tensor)
@@ -375,6 +378,7 @@ def create_hocr(postprocessed_tensor, ocr_fulltext_path, class_mapping_list, out
     #leaf nodes of parentof graph
     leaf_nodes = [node for node in graph_parentof.nodes() if graph_parentof.in_degree(node)!=0 and graph_parentof.out_degree(node)==0]
 
+    prob = False
     #append each word in the ocr text to correct xml node in hocr skeleton
     for l in lines:
         #line format is: Word x, y, w, h or <EOP>/<EOS> (end of paragraph, end of sentence)
@@ -417,7 +421,8 @@ def create_hocr(postprocessed_tensor, ocr_fulltext_path, class_mapping_list, out
                 maxiou_node.append(hocr_word)
             else:
                 pass
-                print(f"didnt find maxiou for word: {word}")
+                prob = True
+    
 
 
 
